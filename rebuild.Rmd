@@ -1,0 +1,157 @@
+---
+title: "markdown test"
+output: html_document
+date: "2026-03-04"
+---
+
+Papaer title: Comprehensive single-cell transcriptomic and proteomic analysis reveals NK cell exhaustion and unique tumor cell evolutionary trajectory in non-keratinizing nasopharyngeal carcinoma
+
+## Experimental Design
+
+**Objective**: To investigate the role of NK cells and tumour cells in non-keratinising nasopharyngeal carcinoma (NK-NPC), which is closely associated with EBV infection.
+非角化性鼻咽癌（NK-NPC）中 NK 细胞是否处于耗竭状态；
+
+NK-NPC 中 肿瘤细胞是否存在特殊的演化轨迹，尤其是否与 EBV 感染状态有关。研究是围绕 NK 细胞功能和肿瘤细胞 evolutionary trajectory 展开的，而 NK-NPC 与 EBV 密切相关
+
+**Method**: Collected three NK-NPC samples and three normal nasopharyngeal mucosa samples for proteomic analysis, combined with GSE162025 (NK-NPC single-cell transcriptome data) and GSE150825 (NLH single-cell transcriptome data) for analysis.
+
+**Analytical steps:**
+
+1. Analysis of proteomic data revealed a significant downregulation of proteins associated with NK cell-mediated cytotoxicity, suggesting that NK cell function may be suppressed. 
+
+
+```{r eval=FALSE}
+#install.packages('devtools')
+#library(devtools)
+#devtools::install_github('junjunlab/scRNAtoolVis')
+
+# if not install ggunchull
+#devtools::install_github("sajuukLyu/ggunchull", type = "source")
+
+#BiocManager::install("CellChat")
+
+# =========================
+# 1. Load packages
+# =========================
+
+## Data import and pre processing
+library(data.table)
+library(readxl)
+library(tibble)
+library(dplyr)
+library(stringr)
+
+## Differential analysis
+library(limma)
+
+## Visualization
+library(ggplot2)
+library(ggrepel)
+library(pheatmap)
+library(patchwork)
+
+## Functional enrichment
+library(clusterProfiler)
+library(enrichplot)
+library(org.Hs.eg.db)
+library(GSEABase)
+library(msigdbr)
+
+## Single-cell and downstream analyses
+library(Seurat)
+library(scRNAtoolVis)
+library(CellChat)
+library(copykat)
+library(SCORPIUS)
+
+
+```
+
+```{r}
+# proteomics
+proteomics_file <- "re/rawdata/12967_2023_4112_MOESM1_ESM.xlsx"
+
+data_pro <- read_xlsx(proteomics_file, sheet = "Proteins")
+
+# Here we only keep:
+#   1) "Gene Symbol" for protein-to-gene mapping
+#   2) six sample-level normalized abundance columns
+#      - F1, F3, F5: cancer samples
+#      - F2, F4, F6: normal samples
+#The goal is to build a protein expression matrix
+# with rows = proteins (genes) and columns = 6 individual samples
+# for downstream differential expression analysis
+
+
+target_cols <- c(
+  "Gene Symbol",
+  "Abundances (Normalized): F1: Sample, cancer",
+  "Abundances (Normalized): F3: Sample, cancer",
+  "Abundances (Normalized): F5: Sample, cancer",
+  "Abundances (Normalized): F2: Sample, normal",
+  "Abundances (Normalized): F4: Sample, normal",
+  "Abundances (Normalized): F6: Sample, normal"
+)
+
+data_pro$`gene symbol` <- str_split(data_pro$`gene symbol`,';',simplify = T)[,1]
+data_pro <- data_pro[!duplicated(data_pro$`gene symbol`),]
+data_pro <- data_pro[!is.na(data_pro$`gene symbol`),]
+data_pro <- column_to_rownames(data_pro,'gene symbol')
+data_pro <- data_pro[rowSums(!is.na(data_pro))==6,]
+
+# deg
+input_matrix <- log2(data_pro)
+group <- as.factor(rep(c('NK_NPC','normal'),each=3))
+design <- model.matrix(~0+group)
+colnames(design) <- c('NK_NPC','normal')
+rownames(design) <- colnames(input_matrix)
+fit <- lmFit(input_matrix,design)
+con.matrix <- makeContrasts('NK_NPC-normal',levels = design)
+fit2 <- contrasts.fit(fit,contrasts = con.matrix)
+fit2 <- eBayes(fit2)
+
+# 差异筛选
+options(digits = 4)
+deg <- topTable(fit2,n=Inf)
+up <- (deg$logFC>0.5)&(deg$P.Val<0.05)
+down <- (deg$logFC<(-0.5))&(deg$P.Val<0.05)
+change <- ifelse(up,'up',ifelse(down,'down','none'))
+deg <- mutate(deg,change)
+deg <- mutate(deg,'p' = -log10(deg$P.Val))
+top5 <- rownames(top_n(deg[deg$change=='up',],5,logFC))
+down5 <- rownames(top_n(deg[deg$change=='down',],-5,logFC))
+deg$label <- ifelse(rownames(deg) %in% c(top5,down5),rownames(deg),NA)
+
+# volcano
+ggplot(deg,aes(x=logFC,y=p,color=change))+
+  geom_point()+
+  geom_vline(xintercept = 1,linetype=2,color='gray',linewidth=1)+
+  geom_vline(xintercept = -1,linetype=2,color='gray',linewidth=1)+
+  geom_hline(yintercept = -log10(0.05),linetype=2,color='gray',linewidth=1)+
+  geom_text_repel(aes(logFC,label=label),
+                  max.overlaps = 100000,size=3,segment.color='black',
+                  box.padding=unit(1,'lines'))
+
+# 差异蛋白pca
+pca_data <- data_pro[rownames(deg[deg$change!='none',]),]
+pca <- prcomp(t(log2(pca_data)),scale. = T)
+xlab <- paste0('PCA_1(', round(summary(pca)$importance[2,1]*100,2),'%)')
+ylab <- paste0('PCA_2(', round(summary(pca)$importance[2,2]*100,2),'%)')
+ggplot(data.frame(pca$x),aes(x=PC1,y=PC2,color=group))+
+  geom_point(size = 3)+stat_ellipse(level = 0.95, show.legend = F)+ 
+  labs(x = xlab,y = ylab,title = 'PCA Analysis')+
+  theme(plot.title = element_text(hjust = 0.5))+
+  guides(color = guide_legend(title = 'Group'))
+# heatmap
+NK_cytotoxicity <- c('PRKCB','PTPN11','LCK','ITGAL','PIK3CB','MAPK3','CASP3')
+pheatmap(data_pro[NK_cytotoxicity,],scale = 'row')
+# KEGG
+kegg_id <- bitr(rownames(deg[deg$change!='none',]),fromType = 'SYMBOL',toType = 'ENTREZID',OrgDb = org.Hs.eg.db)
+kegg <- enrichKEGG(kegg_id$ENTREZID,'hsa',keyType = 'kegg')
+kegg <- setReadable(kegg,OrgDb = org.Hs.eg.db,keyType = 'ENTREZID')
+fc <- deg[deg$change!='none','logFC']
+names(fc) <- rownames(deg[deg$change!='none',])
+cnetplot(kegg,color.params = list(foldChange = fc,edge=T))
+
+
+```
