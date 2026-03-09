@@ -5,7 +5,7 @@ Bioinformatics / omics data analysis project for paper figure reproduction.
 ## Project overview
 This project focuses on reproducing figures and analysis workflows from published omics studies, including proteomics and single-cell transcriptomics.
 
-Current paper:  
+**Current paper:**  
 *Comprehensive single-cell transcriptomic and proteomic analysis reveals NK cell exhaustion and unique tumor cell evolutionary trajectory in non-keratinizing nasopharyngeal carcinoma*
 
 ## Objectives
@@ -15,7 +15,7 @@ Current paper:
 
 ## Data sources
 ### Proteomics
-- Supplementary proteomics file:  
+Supplementary proteomics file:  
 `12967_2023_4112_MOESM1_ESM.xlsx`
 
 ### Single cell transcriptomics
